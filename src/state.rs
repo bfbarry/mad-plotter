@@ -1,5 +1,9 @@
+use cgmath::prelude::*;
+
 use wgpu::util::DeviceExt;
 use winit::window::Window;
+
+use crate::buffer::NUM_INSTANCES_PER_ROW;
 
 pub struct State<'a> {
     surface: wgpu::Surface<'a>,
@@ -13,7 +17,10 @@ pub struct State<'a> {
     window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
-    num_vertices: u32
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
+    instances: Vec<crate::buffer::Instance>,
+    instance_buffer: wgpu::Buffer
 }
 
 impl<'a> State<'a> {
@@ -93,6 +100,7 @@ impl<'a> State<'a> {
                 entry_point: "vs_main",
                 buffers: &[
                     crate::buffer::Vertex::desc(), // how to read the buffer
+                    crate::buffer::InstanceRaw::desc(),
                     ],
                 compilation_options: wgpu::PipelineCompilationOptions::default()
             },
@@ -133,7 +141,45 @@ impl<'a> State<'a> {
             }
         );
 
-        let num_vertices = crate::buffer::VERTICES.len() as u32;
+        let index_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor{
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(crate::buffer::INDICES),
+                usage: wgpu::BufferUsages::INDEX,
+            }
+        );
+
+        let num_indices = crate::buffer::INDICES.len() as u32;
+        let instances = (0..crate::buffer::NUM_INSTANCES_PER_ROW).flat_map(|y| {
+            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                // println!("{0}, {1}, {2}", x, 0, z);
+                let mut position = cgmath::Vector3 {
+                    x: x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0,
+                    y: y as f32,
+                    z: 0 as f32,
+                };
+                position = position *0.1;
+
+                let rotation = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Deg(0.0));
+
+                crate::buffer::Instance {
+                    position, rotation,
+                }
+            })
+        }).collect::<Vec<_>>(); //infers the type of _
+
+        let instance_data = instances.iter().map(crate::buffer::Instance::to_raw).collect::<Vec<_>>();
+
+        println!("num insta {}", instances.len());
+        let instance_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("instance buffer"),
+                contents: bytemuck::cast_slice(&instance_data),
+                usage: wgpu::BufferUsages::VERTEX
+            }
+        );
+
+
         Self {
             window,
             surface,
@@ -143,7 +189,10 @@ impl<'a> State<'a> {
             size,
             render_pipeline,
             vertex_buffer,
-            num_vertices
+            index_buffer,
+            num_indices,
+            instances,
+            instance_buffer
         }
     }
 
@@ -196,8 +245,10 @@ impl<'a> State<'a> {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..self.num_vertices, 0..1);
-
+            
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
         }
         
         // finish command buffer, submit to GPU render queue
