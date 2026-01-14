@@ -16,6 +16,12 @@ struct VertexOutput {
     @location(0) color: vec3<f32>,
 };
 
+struct Projection {
+    projection_matrix: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> projection: Projection; // bind group for arbitrary complex data besides primitives; uniform bc constant cross draw calls
+
 @vertex
 fn vs_main(
    model: VertexInput,
@@ -29,7 +35,8 @@ fn vs_main(
     );
     var out: VertexOutput;
     out.color = model.color;
-    out.clip_position = model_matrix * vec4<f32>(model.position, 1.0);
+    // out.clip_position = model_matrix * vec4<f32>(model.position, 1.0);
+    out.clip_position = projection.projection_matrix * model_matrix * vec4<f32>(model.position, 1.0);
     return out;
 };
 

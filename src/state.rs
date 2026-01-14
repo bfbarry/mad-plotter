@@ -20,11 +20,12 @@ pub struct State<'a> {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     instances: Vec<crate::buffer::Instance>,
-    instance_buffer: wgpu::Buffer
+    instance_buffer: wgpu::Buffer,
+    bind_group0: wgpu::BindGroup
 }
 
 impl<'a> State<'a> {
-    pub async fn new(window: &'a Window) -> State<'a> {
+    pub async fn new(window: &'a Window, xs: Vec<f32>, ys: Vec<f32>) -> State<'a> {
         let size = window.inner_size();
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -85,10 +86,60 @@ impl<'a> State<'a> {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into())
         });
 
+        
+
+        let aspect_ratio = size.width as f32 / size.height as f32;
+        let proj_matrix = cgmath::ortho(
+            -aspect_ratio, aspect_ratio, // left, right
+            -1., 1.,                    // bottom, top
+            0.1, 100.                  //near, far
+        );
+
+        println!("{:?}", aspect_ratio);
+        let proj_matrix_shader: [[f32; 4]; 4] = proj_matrix.into();
+        let proj_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("proj matrix buffer"),
+            contents: bytemuck::cast_slice(&proj_matrix_shader),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        println!("{:?}", proj_matrix_shader);
+
+        let bind_group_layout = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("uniform_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX, // accessible by the vertex shader
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            }
+        );
+        
+        let bind_group0 = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("uniform_bind_group"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: proj_uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            }
+        );
+
         let render_pipeline_layout = 
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render pipeline layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -150,27 +201,28 @@ impl<'a> State<'a> {
         );
 
         let num_indices = crate::buffer::INDICES.len() as u32;
-        let instances = (0..crate::buffer::NUM_INSTANCES_PER_ROW).flat_map(|y| {
-            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                // println!("{0}, {1}, {2}", x, 0, z);
-                let mut position = cgmath::Vector3 {
-                    x: x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0,
-                    y: y as f32,
-                    z: 0 as f32,
-                };
-                position = position *0.1;
+        let instances = xs.iter().zip(ys.iter()).map(|(&x, &y)| {
+            let mut position = cgmath::Vector3 {
+                x: x as f32,
+                y: y as f32,
+                z: 0 as f32,
+            } - crate::buffer::INSTANCE_DISPLACEMENT;
 
-                let rotation = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Deg(0.0));
+            position = position *0.01;
 
-                crate::buffer::Instance {
-                    position, rotation,
-                }
-            })
+            let rotation = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Deg(0.0));
+
+            crate::buffer::Instance {
+                position, rotation,
+            }
         }).collect::<Vec<_>>(); //infers the type of _
-
+        
         let instance_data = instances.iter().map(crate::buffer::Instance::to_raw).collect::<Vec<_>>();
+        
+        instance_data.iter().for_each(|i| {
+            println!("{:?}", i.model)
+        });
 
-        println!("num insta {}", instances.len());
         let instance_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("instance buffer"),
@@ -192,7 +244,8 @@ impl<'a> State<'a> {
             index_buffer,
             num_indices,
             instances,
-            instance_buffer
+            instance_buffer,
+            bind_group0
         }
     }
 
@@ -244,6 +297,7 @@ impl<'a> State<'a> {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.bind_group0, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));

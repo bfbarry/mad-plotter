@@ -6,12 +6,12 @@ use winit::{
     window::WindowBuilder
 };
 
-pub async fn run() {
+pub async fn run(xs: Vec<f32>, ys: Vec<f32>) {
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
-    let mut state = State::new(&window).await;
+    let mut state = State::new(&window, xs, ys).await;
     let mut surface_configured = false;
     // `let` to hide unused Result warning
     let _ = event_loop.run(move |event, control_flow| match event {
